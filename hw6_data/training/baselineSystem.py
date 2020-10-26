@@ -74,7 +74,8 @@ def passageRetr(qid, question):
               if word in passage:
                 questionSim[passage.index(word)] = 1
 
-            cosine_similarity = numpy.dot(questionSim, passageSim) / (numpy.linalg.norm(questionSim) * numpy.linalg.norm(passageSim))
+            cosine_similarity =\
+                    numpy.dot(questionSim, passageSim) / (numpy.linalg.norm(questionSim) * numpy.linalg.norm(passageSim))
             
             if(math.isnan(cosine_similarity)):
               cosine_similarity = 0
@@ -86,8 +87,6 @@ def passageRetr(qid, question):
             passage = []
             questionSim = [0] * 20
     return tenPassages
-
-
 
 # ----------------------------------------------------------------------------------------------------------------------- #
 # main
