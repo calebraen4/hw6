@@ -1,23 +1,28 @@
+import string
 import nltk
+# Get stopwords
 nltk.download('stopwords')
 from nltk.corpus import stopwords
+# Get ngram computation method
 from nltk import ngrams
+# Get pos_tag method
 from nltk.tag import pos_tag
+# Get word_tokenize method
 from nltk.tokenize import word_tokenize
+# Needed for tagger
 nltk.download('averaged_perceptron_tagger')
+# Get regex
 import re
+# Numpy
 import numpy  
+# And math
 import math
-from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import CountVectorizer
+# For word lemmatization
+from nltk.stem import WordNetLemmatizer
+nltk.download('wordnet') 
 # scikit
 # countVectorizer
-
-
-#TODO
-# Gather training questions,
-# Process questions
-# Query formulation
 
 # stopwords
 stopWords = list(stopwords.words('english'))
@@ -27,7 +32,8 @@ class Qasystem:
     # Init method
     # Takes in the data directory
     def __init__(self, trainDir, testDir):
-        print("Initializing")
+        self.dir = ""
+        self.lemmatizer = WordNetLemmatizer()
 
         # Initialize data files for training
         self.trainQs = trainDir + "/qadata/questions.txt"
@@ -43,6 +49,7 @@ class Qasystem:
         passages = {}
 
         for q in questions:
+            print(questions[q])
             passages[q] = self.retrievePassages(q, questions[q])
             self.extractAnswer(passages[q], 3, questions[q])
 
@@ -62,12 +69,8 @@ class Qasystem:
         
     # Given a question, formulate a query
     def formulateQuery(self, question):
+        return list(set([word for word in self.lemmatize(question) if word not in stopWords]))
 
-        # Remove punctuation
-        q = re.sub(r'[^\w\s]', '', question)
-
-        # Return list of words without stopwords
-        return [word.lower() for word in word_tokenize(q) if not word in stopWords]
 
     # Retrieves top-10 passages based on cosine similarity
     def retrievePassages(self, qid, question): 
@@ -80,8 +83,6 @@ class Qasystem:
             # Initialize variables to keep track and store information
             count = 0  #Number of tokens in block  
             passage = [] # Passage is a list of tokens in that passage
-            questionSim = [0] * 20 # Question similarity
-            passageSim = [1] * 20 # Passage similarity
             for line in f:
                 # skip if line starts with tag or Qid
                 if (line[0] != "<" and line[0:3] != "Qid"):
@@ -90,15 +91,14 @@ class Qasystem:
                             passage.append(word)
                             count += 1 
                         else:
-                            passageLower = [word.lower() for word in passage]
-                            for word in question:
-                                if word in passageLower:
-                                    questionSim[passageLower.index(word)] = 1
+                            vectorizer = CountVectorizer(vocabulary=question)
+                            passageVector = vectorizer.fit_transform([" ".join(self.lemmatize(" ".join(passage)))])
+                            questionVector = vectorizer.fit_transform([" ".join(question)])
 
                             cosSim =\
-                                    numpy.dot(questionSim, passageSim) /\
-                                    (numpy.linalg.norm(questionSim) *\
-                                    numpy.linalg.norm(passageSim))
+                                    numpy.dot(questionVector.toarray()[0], passageVector.toarray()[0]) /\
+                                    (numpy.linalg.norm(questionVector.toarray()[0]) *\
+                                    numpy.linalg.norm(passageVector.toarray()[0]))
                             
                             if(math.isnan(cosSim)):
                                 cosSim = 0
@@ -112,6 +112,19 @@ class Qasystem:
                             questionSim = [0] * 20
         return passages
     
+    def lemmatize(self, passage):
+        q = passage.translate(str.maketrans('', '', string.punctuation))
+
+        tagged = pos_tag(q.split())
+        lemmed = []
+        for tag in tagged:
+            if tag[1][0] == 'V':
+                lemmed.append(self.lemmatizer.lemmatize(tag[0].lower(), 'v'))
+            else:
+                lemmed.append(self.lemmatizer.lemmatize(tag[0].lower()))
+
+        return lemmed
+
     def genNgrams(self, passages, n):
         grams = {}
         for i in range(0, n + 1):
@@ -132,21 +145,33 @@ class Qasystem:
         return {k: v for k, v in sorted(grams.items(),reverse=True, key=lambda item: item[1])}
 
     def extractAnswer(self, passages, n, question):
-        grams = self.genNgrams(passages, n)
+        grams = self.genNgrams(passages[0:10], n)
+
+        for passage in passages[0:10]:
+            print(" ".join(passage[0]) + "\n") 
+
         
         # For who questions
         # Determine the type of question
         if "who" in question:
-            print(grams)
+            for passage in passages[0:10]:
+                tagged_sent = pos_tag(passage[0])
+                for word in tagged_sent:
+                    if word[1] == "NNP":
+                        for seq in grams:
+                            if word[0] in seq.split():
+                                grams[seq] +=10
+            #print(grams)
+            ordered = {k: v for k, v in sorted(grams.items(), reverse=True, key=lambda item: item[1])}
+            count = 0
+            for seq in ordered:
+                print(seq)
+                count += 1
+                if count == 10:
+                    break
 
-            print("Who question")
-            words = ""
-            for gram in grams:
-                words += " " + gram
-            tagged_sent = pos_tag(words.split())
 
-            print(tagged_sent)
-
+        """
         elif "what" in question:
             pass
             #print("What")
@@ -156,6 +181,7 @@ class Qasystem:
         elif "when" in question:        
             pass
             #print("When")
+        """
 
     def test(self):
         pass
