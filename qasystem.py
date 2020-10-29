@@ -250,7 +250,7 @@ class Qasystem:
 
         # Check that we have enough answers to return
         for g in grams:
-            if len(answers) < 10:
+            if len(answers) ==  10:
                 break
             if g not in answers:
                 answers.append(g)
