@@ -27,6 +27,7 @@ from nltk.tag import pos_tag
 
 # Get word_tokenize method
 from nltk.tokenize import word_tokenize
+from nltk.tokenize import sent_tokenize
 
 # Needed for tagger
 nltk.download('averaged_perceptron_tagger')
@@ -47,6 +48,12 @@ from sklearn.feature_extraction.text import CountVectorizer
 from nltk.stem import WordNetLemmatizer
 nltk.download('wordnet') 
 
+# Spacy for NER
+import spacy
+from spacy import displacy
+from collections import Counter
+import en_core_web_sm
+nlp = spacy.load('en_core_web_sm')
 
 ###################################################################
 ################## VARIABLE DECLARACTIONS #########################
@@ -55,7 +62,7 @@ nltk.download('wordnet')
 # stopwords
 stopWords = list(stopwords.words('english'))
 # Question markers
-qM = ['who', 'when', 'what', 'where', 'why', 'how']
+qM = ['who', 'when', 'what', 'where', 'why', 'how', 'name']
 
 # QA system class.
 class Qasystem:
@@ -87,7 +94,7 @@ class Qasystem:
             # Get top 10 relevant passages
             passages[q] = self.retrievePassages(q, questions[q])
             # And then extract answers from that
-            answers[q]  = self.extractAnswer(passages[q], 3, questions[q])
+            answers[q]  = self.extractAnswers(passages[q], questions[q])
 
         return answers
 
@@ -114,61 +121,48 @@ class Qasystem:
     def formulateQuery(self, question):
         # Lemmatizes question and removes stop words to return a list of questions
         # of words with no duplicate word
-        return list(set([word for word in self.lemmatize(question) if word not in stopWords and word not in qM]))
+        return list(set([word for word in self.lemmatize(question) if word in qM or word not in stopWords]))
 
     # Retrieves top-10 passages based on cosine similarity
     def retrievePassages(self, qid, question): 
         # list of tuples, tuples contain passage, and cosine sim of question and that passage
         passages = [([], 0)] * 10
 
+        # Create vectorizer with question as vocabulary
+        vectorizer = CountVectorizer(vocabulary=question)
+        questionV = vectorizer.fit_transform([" ".join(question)])
+
+        # String to hold raw text
+        text = ""
+
         # Open file of topdocs
         with open(self.docs + qid, 'r', encoding='ISO-8859-1') as f:
+            text = " ".join([line for line in f if line[0] != "<" and line[0:3] != "Qid"])
+        
+        # For each sentence check cosine similarity
+        for sentence in sent_tokenize(text):
+            # Get the sentence without stopWords
+            passage = [word for word in word_tokenize(sentence) if word not in stopWords]
 
-            # Initialize variables to keep track and store information
-            count = 0  #Number of tokens in block  
-            passage = [] # Passage is a list of tokens in that passage
+            # Create feature vector for passage
+            passageV = vectorizer.fit_transform([" ".join(self.lemmatize(" ".join(passage)))])
 
-            # For each line of topdocs
-            for line in f:
+            # Compute cosine similarity
+            cosSim =\
+                    numpy.dot(questionV.toarray()[0], passageV.toarray()[0]) /\
+                    (numpy.linalg.norm(questionV.toarray()[0]) *\
+                    numpy.linalg.norm(passageV.toarray()[0]))
 
-                # Create vectorizer with question as vocabulary
-                vectorizer = CountVectorizer(vocabulary=question)
-                questionVector = vectorizer.fit_transform([" ".join(question)])
+            # And check that it's a number
+            if math.isnan(cosSim):
+                cosSim = 0
+        
+            # Compare with minimum result of cosine similarities in passages
+            if(cosSim > min(passages, key=lambda x:x[1])[1]):
+                passages[passages.index(min(passages, key=lambda x:x[1]))] = \
+                    (passage, cosSim)
 
-                # skip if line starts with tag or Qid
-                if (line[0] != "<" and line[0:3] != "Qid"):
-                    # Split the line 
-                    # and add words to the passage until 20 words are in a passage
-                    for word in line.split():
-                        if count < 20:
-                            passage.append(word)
-                            count += 1 
-                        else:
-                            # List for the passage without stopwords
-                            # for better cosine similarity metrics
-                            # We want to keep the passage with words to extract answer
-                            passageNoStopWords = [word for word in passage if word not in stopWords]
-
-                            # Create a feature vector for passage with lemmatized words and no stop words
-                            passageVector = vectorizer.fit_transform([" ".join(self.lemmatize(" ".join(passageNoStopWords)))])
-
-                            # Compute cosine similarity
-                            cosSim =\
-                                    numpy.dot(questionVector.toarray()[0], passageVector.toarray()[0]) /\
-                                    (numpy.linalg.norm(questionVector.toarray()[0]) *\
-                                    numpy.linalg.norm(passageVector.toarray()[0]))
-                            
-                            # Check that it's a number
-                            if(math.isnan(cosSim)):
-                                cosSim = 0
-                            
-                            # find smallest cosine in passages and update 
-                            if(cosSim > min(passages, key=lambda x:x[1])[1]):
-                                passages[passages.index(min(passages, key=lambda x:x[1]))] = \
-                                    (passage, cosSim)
-                            # Reset for next passage
-                            count = 0
-                            passage = []
+        # Return
         return passages
     
     # Method to lemmatize a given text
@@ -188,10 +182,15 @@ class Qasystem:
             else:
                 lemmed.append(self.lemmatizer.lemmatize(tag[0].lower()))
 
+            # Case for what's since it's not working too well
+            if lemmed[-1] == "whats":
+                lemmed[-1] = "what"
+
         return lemmed
 
     # Method to generate ngrams
     # Uses nltk 
+    # With n-gram tiling
     def genNgrams(self, passages, n):
         # Create dictionary with key as ngram and frequency as value
         grams = {}
@@ -202,6 +201,7 @@ class Qasystem:
                 # For each passage
                 # Create ngram
                 sequences = ngrams(passage[0], i)
+
                 # Treat to get appropriate output
                 for seq in sequences:
                     sequence = ""
@@ -216,76 +216,86 @@ class Qasystem:
                         else:
                             grams[sequence] = 1
 
+        # Return in decreasing order
         return {k: v for k, v in sorted(grams.items(),reverse=True, key=lambda item: item[1])}
 
     # Method to extract answer given top 10 passages
-    def extractAnswer(self, passages, n, question):
+    def extractAnswers(self, passages, question):
+
         # List to store answers
         answers = []
-        # Generate ngrams
-        grams = self.genNgrams(passages[0:10], 10)
 
-        count = 0
-        for gram in grams:
-            answers.append(gram)
-            if count == 10:
+        # Use n as 10 as max length answer is 10
+        # Get top 20 ngrams
+        c = 0
+        grams = []
+        for g in self.genNgrams(passages, 10):
+            if c == 20:
                 break
-            count += 1
+            grams.append(g)
+            c += 1
 
-        # For top 10 passages, print passage
-        """
-        for passage in passages[0:10]:
-            print(passage)
-            tagged = pos_tag(passage[0])
+        # Get the question type
+        qType = [word for word in question if word in qM][0]
 
-            if len(passage[0]) == 0:
-                print(question)
-                print("What")
-            result = self.parser.parse(tagged)
-            for elem in result:
-                if len(elem) == 1:
-                    print("")
-        """
-
-        # Need to extract noun phrases
-
-        
-        # For who questions
-        # Determine the type of question
-        """
-        if "who" in question:
-            for passage in passages[0:10]:
-                tagged_sent = pos_tag(passage[0])
-                for word in tagged_sent:
-                    if word[1] == "NNP":
-                        for seq in grams:
-                            if word[0] in seq.split():
-                                grams[seq] +=10
-            #print(grams)
-            ordered = {k: v for k, v in sorted(grams.items(), reverse=True, key=lambda item: item[1])}
-            count = 0
-            for seq in ordered:
-                print(seq)
-                count += 1
-                if count == 10:
-                    break
+        # For each sentence in given passages
+        for sentence in passages:
+            # Treat to get NER
+            doc = nlp(" ".join(sentence[0]))
+            # Get answer given each sentence
+            for a in self.getAnswer(qType, doc, grams):
+                if a not in answers:
+                    answers.append(a)
 
 
-        """
-        """
-        elif "what" in question:
-            pass
-            #print("What")
-        elif "where" in question:
-            pass
-            #print("Where")
-        elif "when" in question:        
-            pass
-            #print("When")
-        """
+        # Check that we have enough answers to return
+        for g in grams:
+            if len(answers) < 10:
+                break
+            if g not in answers:
+                answers.append(g)
+
         return answers
+    
+    # Method to extract answers given named entities and ngrams
+    def getAnswer(self, qT, names, grams):
+        # Initialize triggers and pass in to method add
+        if qT == "where":
+            triggers = ["GPE", "FAC"]
+            return self.add(triggers, names, grams)
 
+        elif qT == "when":
+            triggers = ["DATE", "EVENT", "TIME"]
+            return self.add(triggers, names, grams)
 
+        elif qT == "who":
+            triggers = ["PERSON", "NORP", "ORG", "GPE"]
+            return self.add(triggers, names, grams)
+
+        elif qT == "what":
+            triggers = ["FAC", "LOC", "PRODUCT", "EVENT", "WORK_OF_ART", "ORG", "GPE"]
+            return self.add(triggers, names, grams)
+
+        elif qT == "name":
+            triggers = ["PERSON", "WORK_OF_ART", "ORG", "GPE", "LOC", "NORP",
+                    "FAC", "PRODUCT", "EVENT", "LAW", "LANGUAGE", "DATE", "TIME"]
+            return self.add(triggers, names, grams)
+
+        elif qT == "how":
+            triggers = ["CARDINAL", "ORDINAL", "MONEY", "GPE"]
+            return self.add(triggers, names, grams)
+
+    # Method to avoid copying code avobe
+    def add(self, triggers, names, grams):
+        # Create list to return
+        a = []
+        for ent in names.ents:
+            if ent.label_ in triggers and ent.text in grams:
+                a.append(ent.text)
+        return a
+                
+
+# Method to print answers
 def printAnswer(answers): 
     for q in answers:
         print(q)
