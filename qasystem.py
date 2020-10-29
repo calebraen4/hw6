@@ -138,6 +138,8 @@ class Qasystem:
         # Open file of topdocs
         with open(self.docs + qid, 'r', encoding='ISO-8859-1') as f:
             text = " ".join([line for line in f if line[0] != "<" and line[0:3] != "Qid"])
+            # Remove punctuation
+            text = text.translate(str.maketrans('', '', string.punctuation))
         
         # For each sentence check cosine similarity
         for sentence in sent_tokenize(text):
