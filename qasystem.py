@@ -250,12 +250,12 @@ class Qasystem:
 
         # Check that we have enough answers to return
         for g in grams:
-            if len(answers) ==  10:
+            if len(answers) >= 10:
                 break
             if g not in answers:
                 answers.append(g)
 
-        return answers
+        return answers[:10]
     
     # Method to extract answers given named entities and ngrams
     def getAnswer(self, qT, names, grams):
