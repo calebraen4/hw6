@@ -1,0 +1,7 @@
+Python3
+
+nltk: pip install nltk
+numpy: pip install numpy
+sklearnl: pip install sklearn
+spacy: pip install spacy
+en_core_web_sm:  python -m spacy download en_core_web_sm
